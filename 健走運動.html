@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>健走追蹤器 — 更新版</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <style>
+    :root{--bg:#f7fafc;--card:#ffffff;--accent:#1e88e5}
+    body{font-family: system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; margin:0; background:var(--bg); color:#111}
+    header{background:linear-gradient(90deg,#fff,#eef6ff); padding:14px 18px; box-shadow:0 1px 0 rgba(0,0,0,0.04)}
+    .container{max-width:1200px;margin:18px auto;padding:12px}
+    h1{margin:0;font-size:20px}
+    .layout{display:grid;grid-template-columns:1fr 420px;gap:14px}
+    .card{background:var(--card);border-radius:10px;padding:12px;box-shadow:0 6px 18px rgba(16,24,40,0.06)}
+    #map{height:520px;border-radius:8px}
+    button{background:var(--accent);color:white;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
+    button.alt{background:#4caf50}
+    .muted{color:#666;font-size:13px}
+    .row{display:flex;gap:8px;align-items:center}
+    .metric{display:flex;flex-direction:column;padding:8px;border-radius:8px;background:#f4f8fb}
+    .metric .label{font-size:12px;color:#666}
+    .metric .value{font-weight:700;font-size:18px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{padding:8px;border-bottom:1px dashed #eee;text-align:left}
+    .small{font-size:13px}
+    .flex-col{display:flex;flex-direction:column}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    a.inline{color:var(--accent);text-decoration:none}
+    .danger{background:#ef4444}
+    footer{margin-top:12px;font-size:13px;color:#666}
+    .lifebar{height:22px;background:#eee;border-radius:12px;overflow:hidden;display:flex;align-items:center}
+    .lifebar > i{display:inline-block;width:100%;height:100%;background:linear-gradient(90deg,#ffb86b,#ff6b6b);border-radius:12px;transition:width 400ms}
+    .goalRow{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .recommendation{margin-top:10px;padding:8px;border-radius:8px;background:#f7fbf9;border:1px solid #e6f4ec}
+    .badge{background:#e8f0ff;padding:6px 8px;border-radius:8px;font-weight:700}
+    .smallBtn{padding:6px 8px;border-radius:6px;font-size:13px}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container row">
+      <div style="flex:1">
+        <h1>健走追蹤器 — 更新版（目標鎖定、即時回饋 B、全部路線地圖）</h1>
+        <div class="muted">目標需按「更改目標」才可變更；即時回饋依速度/心率/時長；可一次顯示全部紀錄路線（隨機顏色）。</div>
+      </div>
+      <div>
+        <button id="exportBtn">匯出 CSV</button>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <div class="layout">
+      <section class="card">
+        <div id="map"></div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;align-items:center">
+          <div class="muted">GPS 精準度: <span id="accuracy">-</span> 公尺</div>
+          <div class="row">
+            <button id="startBtn">開始健走</button>
+            <button id="stopBtn" class="alt" disabled>結束</button>
+            <button id="saveBtn" disabled>儲存本次</button>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <div class="badge">推薦路線</div>
+          <div style="flex:1">
+            <select id="prefSelect">
+              <option value="park">靠近公園 / 景觀</option>
+              <option value="quiet">安靜路線（避開主幹道）</option>
+              <option value="scenic">風景優先</option>
+            </select>
+            <input id="desiredKm" type="number" min="0.5" step="0.5" value="3" style="width:80px;margin-left:6px"> km
+            <button id="recommendBtn" style="margin-left:6px">推薦</button>
+          </div>
+          <div class="muted small">可依地點搜尋附近公園並生成簡易迴圈路線；若啟用空污檢查，會過濾 AQI 高的地區。</div>
+        </div>
+
+      </section>
+
+      <aside class="card">
+        <div class="flex-col">
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="metric">
+              <div class="label">本次時間</div>
+              <div class="value" id="duration">00:00:00</div>
+            </div>
+            <div class="metric">
+              <div class="label">距離 (km)</div>
+              <div class="value" id="distance">0.00</div>
+            </div>
+            <div class="metric">
+              <div class="label">平均速度 (km/h)</div>
+              <div class="value" id="avgSpeed">0.0</div>
+            </div>
+          </div>
+
+          <div class="row" style="gap:10px;margin-bottom:10px">
+            <div style="flex:1">
+              <div class="label">強度判定</div>
+              <div id="intensity" style="font-weight:700">-</div>
+              <div class="muted small">建議：單次至少15分鐘，週累積150–300分鐘中等強度。</div>
+            </div>
+            <div style="width:120px">
+              <div class="label">步數估算</div>
+              <div id="estSteps" style="font-weight:700">-</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="label">穿戴裝置即時數據</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+              <button id="connectWearBtn">連接手錶 (Web Bluetooth)</button>
+              <div class="muted small">心率: <span id="hr">-</span> bpm</div>
+              <div class="muted small">即時步數: <span id="liveSteps">-</span></div>
+            </div>
+            <div class="muted small" style="margin-top:6px">若裝置不支援 Bluetooth，請使用手動輸入或匯入資料。</div>
+          </div>
+
+          <div style="margin-top:12px">
+            <div class="label">目標設定（個人化）</div>
+            <div class="goalRow">
+              <div style="flex:1">
+                <div class="small">每日步數目標</div>
+                <input id="goalSteps" type="number" value="8000" style="width:100%" disabled>
+              </div>
+              <div style="flex:1">
+                <div class="small">每週中等時數目標（分鐘）</div>
+                <input id="goalWeeklyMin" type="number" value="150" style="width:100%" disabled>
+              </div>
+            </div>
+            <div style="margin-top:8px" class="small">達成率（生命條）：</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+              <div style="flex:1">
+                <div class="small">今日步數達成</div>
+                <div class="lifebar"><i id="lifeSteps" style="width:10%"></i></div>
+              </div>
+              <div style="width:110px;text-align:center"> <div id="lifeStepsText">0%</div> </div>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+              <button id="editGoalBtn" class="smallBtn">更改目標</button>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <div class="label">紀錄（依日期顯示）</div>
+            <div id="historyContainer" style="max-height:220px;overflow:auto;margin-top:6px"></div>
+            <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+              <button id="showAllBtn">全部路線地圖</button>
+              <button id="clearBtn" class="danger">清除所有紀錄</button>
+            </div>
+          </div>
+
+        </div>
+      </aside>
+    </div>
+
+    <div style="max-width:1200px;margin:18px auto">
+      <div class="card">
+        <h3>即時回饋建議</h3>
+        <div id="feedback" class="recommendation">尚未開始健走</div>
+      </div>
+    </div>
+
+    <footer>
+      進階功能：路線推薦使用 OpenStreetMap Overpass 與 OpenAQ 空氣品質（若網路可用）。穿戴裝置透過 Web Bluetooth 連接支援 Heart Rate Service (0x180D) 的設備。
+    </footer>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    // ---------- 基本地圖與定位 ----------
+    const map = L.map('map');
+    let marker, polyline;
+    let watchId = null; let path = []; let startTime = null; let timerInterval = null;
+    let allRouteLayers = []; // store layers for "show all"
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OSM'}).addTo(map);
+    if(navigator.geolocation){ navigator.geolocation.getCurrentPosition(p=>{ map.setView([p.coords.latitude,p.coords.longitude],16); },()=>map.setView([25.0330,121.5654],13)); } else map.setView([25.0330,121.5654],13);
+
+    function onPosition(pos){ const c = pos.coords; document.getElementById('accuracy').innerText = Math.round(c.accuracy)+' m'; const latlng = [c.latitude,c.longitude]; if(!marker) marker = L.marker(latlng).addTo(map); else marker.setLatLng(latlng); if(path.length===0) map.panTo(latlng); if(!polyline) polyline = L.polyline([], {color:'#1e88e5',weight:5}).addTo(map); polyline.addLatLng(latlng); path.push({lat:c.latitude,lng:c.longitude,ts:Date.now(),acc:c.accuracy}); }
+
+    function startWatch(){ if(!navigator.geolocation) return alert('此瀏覽器不支援 Geolocation'); path=[]; if(polyline){ map.removeLayer(polyline); polyline=null; } polyline = L.polyline([], {color:'#1e88e5',weight:5}).addTo(map); watchId = navigator.geolocation.watchPosition(onPosition,err=>{console.error(err);alert('取得位置失敗：'+err.message);},{enableHighAccuracy:true,maximumAge:1000,timeout:5000}); startTime = Date.now(); document.getElementById('startBtn').disabled=true; document.getElementById('stopBtn').disabled=false; document.getElementById('saveBtn').disabled=true; timerInterval = setInterval(updateStats,800); }
+    function stopWatch(){ if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; } if(timerInterval){ clearInterval(timerInterval); timerInterval=null; } updateStats(); document.getElementById('startBtn').disabled=false; document.getElementById('stopBtn').disabled=true; document.getElementById('saveBtn').disabled=false; }
+
+    function updateStats(){ const now = Date.now(); const durSec = startTime ? Math.floor((now - startTime)/1000) : 0; document.getElementById('duration').innerText = formatHMS(durSec); const distKm = calcDistanceFromPath(path); document.getElementById('distance').innerText = distKm.toFixed(2); const hours = durSec/3600 || 0.000001; const avgSpeed = distKm / hours; document.getElementById('avgSpeed').innerText = (avgSpeed||0).toFixed(1); const intensity = classifyIntensity(avgSpeed); document.getElementById('intensity').innerText = intensity.label + ' — ' + intensity.note; const steps = estimateSteps(distKm); document.getElementById('estSteps').innerText = Math.round(steps).toLocaleString() + ' 步'; updateFeedback(avgSpeed, parseInt(document.getElementById('hr').innerText)||null, durSec); updateLifeBar(); }
+
+    function formatHMS(s){ const hh = String(Math.floor(s/3600)).padStart(2,'0'); s%=3600; const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s%60).padStart(2,'0'); return hh+':'+mm+':'+ss; }
+    function calcDistanceFromPath(p){ if(!p || p.length<2) return 0; let total=0; for(let i=1;i<p.length;i++){ total+=haversine(p[i-1],p[i]); } return total/1000; }
+    function haversine(a,b){ const R=6371000; const toRad=v=>v*Math.PI/180; const dLat=toRad(b.lat-a.lat); const dLon=toRad(b.lng-a.lng); const lat1=toRad(a.lat); const lat2=toRad(b.lat); const aa=Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2; const c=2*Math.atan2(Math.sqrt(aa),Math.sqrt(1-aa)); return R*c; }
+    function classifyIntensity(kmh){ if(!kmh || kmh < 2.5) return {label:'非常緩步', note:'輕度活動'}; if(kmh < 4.0) return {label:'緩步', note:'低強度'}; if(kmh >=4.0 && kmh<6.0) return {label:'快步 (中等強度)', note:'建議每次至少15分'}; return {label:'快速/跑步 (高強度)', note:'高強度運動'}; }
+    function estimateSteps(km){ const stepLength = 0.78; return (km*1000)/stepLength; }
+
+    // ---------- 儲存、依日期分組顯示 ----------
+    function saveSession(){ if(!startTime) return alert('尚未開始或沒有資料'); const durText=document.getElementById('duration').innerText; const distance=parseFloat(document.getElementById('distance').innerText)||0; const avgSpeed=parseFloat(document.getElementById('avgSpeed').innerText)||0; const steps=Math.round(estimateSteps(distance)); const intensity=classifyIntensity(avgSpeed).label; const now = Date.now(); const record={ id:'w_'+now, date:new Date(now).toISOString(), dateOnly: new Date(now).toISOString().slice(0,10), duration:durText, durationSec: Math.floor((now-startTime)/1000), distance:distance, avgSpeed:avgSpeed, steps:steps, intensity:intensity, path:path }; const arr=JSON.parse(localStorage.getItem('walk_records')||'[]'); arr.push(record); localStorage.setItem('walk_records',JSON.stringify(arr)); document.getElementById('saveBtn').disabled=true; refreshHistory(); alert('已儲存本次健走紀錄'); }
+
+    function refreshHistory(){ const container = document.getElementById('historyContainer'); container.innerHTML=''; const arr = JSON.parse(localStorage.getItem('walk_records')||'[]'); if(!arr.length){ container.innerHTML='<div class="muted small">尚無紀錄</div>'; updateWeeklyStats(arr); return; } // group by dateOnly
+      const grouped = arr.reduce((acc,r)=>{ acc[r.dateOnly]=acc[r.dateOnly]||[]; acc[r.dateOnly].push(r); return acc; },{});
+      const dates = Object.keys(grouped).sort((a,b)=>b.localeCompare(a));
+      for(const d of dates){ const dayCard = document.createElement('div'); dayCard.style.borderBottom='1px dashed #eee'; dayCard.style.padding='8px 0'; dayCard.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${d} <span class='muted small'>(${grouped[d].length} 次)</span></div>`;
+        grouped[d].sort((a,b)=>b.date.localeCompare(a.date)); for(const r of grouped[d]){ const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.alignItems='center'; row.style.padding='6px 0'; row.innerHTML = `<div><div style='font-weight:600'>${new Date(r.date).toLocaleTimeString()}</div><div class='muted small'>${r.distance.toFixed(2)} km • ${r.duration} • ${r.intensity}</div></div><div><button data-id='${r.id}' class='viewBtn'>檢視</button></div>`; dayCard.appendChild(row); }
+        container.appendChild(dayCard);
+      }
+      // attach view handlers
+      document.querySelectorAll('.viewBtn').forEach(b=>b.addEventListener('click',e=>{ const id=e.currentTarget.dataset.id; const rec = arr.find(x=>x.id===id); if(rec) showRecordOnMap(rec); })); updateWeeklyStats(arr);
+    }
+
+    function showRecordOnMap(rec){ if(!rec.path||rec.path.length===0) return alert('此紀錄無 GPS 路徑'); // remove existing route polyline used for live tracking
+      if(polyline) map.removeLayer(polyline);
+      polyline = L.polyline(rec.path.map(p=>[p.lat,p.lng]), {color:'#ff5722',weight:5}).addTo(map);
+      map.fitBounds(polyline.getBounds(),{padding:[20,20]});
+      if(marker) map.removeLayer(marker);
+      marker = L.marker([rec.path[0].lat, rec.path[0].lng]).addTo(map).bindPopup('起點').openPopup();
+    }
+
+    function updateWeeklyStats(arr){ const oneWeekAgo = Date.now() - 7*24*3600*1000; const week = arr.filter(r=> new Date(r.date).getTime() >= oneWeekAgo); const totalMin = Math.floor(week.reduce((s,r)=>s + (r.durationSec||0),0)/60); const totalSteps = week.reduce((s,r)=>s + (r.steps||0),0); const moderateCount = week.filter(r=> r.avgSpeed>=4.0).length; document.getElementById('weeklyMinutes') && (document.getElementById('weeklyMinutes').innerText = totalMin + ' 分'); document.getElementById('weeklySteps') && (document.getElementById('weeklySteps').innerText = totalSteps.toLocaleString() + ' 步'); document.getElementById('weeklyModerateCount') && (document.getElementById('weeklyModerateCount').innerText = moderateCount + ' 次'); }
+
+    // export / clear
+    function exportCSV(){ const arr=JSON.parse(localStorage.getItem('walk_records')||'[]'); if(!arr.length) return alert('沒有紀錄可匯出'); const header=['id','date','duration','distance_km','avgSpeed_kmh','steps','intensity']; const rows=arr.map(r=>[r.id,r.date,r.duration,r.distance,r.avgSpeed,r.steps,r.intensity].join(',')); const csv=header.join(',')+'\n'+rows.join('\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='walk_records.csv'; document.body.appendChild(a); a.click(); a.remove(); }
+    function clearAll(){ if(confirm('確定清除所有本地儲存的健走紀錄？此動作無法復原')){ localStorage.removeItem('walk_records'); refreshHistory(); alert('已清除'); } }
+
+    // ---------- 路線推薦（使用 Overpass API 搜尋附近公園 / leisure=park） ----------
+    async function recommendRoute(){ if(!marker) return alert('請先允許定位並取得起點'); const latlng = marker.getLatLng(); const pref = document.getElementById('prefSelect').value; const desiredKm = parseFloat(document.getElementById('desiredKm').value)||3; // 取得附近公園
+      const parks = await fetchNearbyParks(latlng.lat, latlng.lng, 3000);
+      const aqi = await fetchNearbyAQI(latlng.lat, latlng.lng);
+      document.getElementById('feedback').innerText = `目前 AQI（附近測站）：${aqi?aqi+' (低表示空氣好)':'無資料'}`;
+      let candidate=null;
+      if(pref==='park' && parks.length){ candidate = parks[0]; }
+      let route = generateLoop(latlng.lat, latlng.lng, desiredKm);
+      if(candidate){ route = [ [latlng.lat, latlng.lng], [candidate.lat, candidate.lon], ...generateLoop(candidate.lat,candidate.lon,desiredKm/2,6) ]; }
+      if(polyline) map.removeLayer(polyline);
+      polyline = L.polyline(route, {color:'#2e7d32',weight:4,dashArray:'6,6'}).addTo(map);
+      map.fitBounds(polyline.getBounds(),{padding:[20,20]});
+      if(candidate){ L.marker([candidate.lat,candidate.lon]).addTo(map).bindPopup(candidate.name || '附近公園').openPopup(); }
+    }
+
+    // Overpass query
+    async function fetchNearbyParks(lat,lon,radius=3000){ try{ const q = `[out:json][timeout:25];(node[leisure=park](around:${radius},${lat},${lon});way[leisure=park](around:${radius},${lat},${lon});relation[leisure=park](around:${radius},${lat},${lon}););out center;`; const res = await fetch('https://overpass-api.de/api/interpreter', {method:'POST',body:q}); const data = await res.json(); const items=[]; for(const el of data.elements){ const c = el.type==='node' ? {lat:el.lat,lon:el.lon} : (el.center||{}); items.push({id:el.id,name:el.tags&&el.tags.name,lat:c.lat,lon:c.lon}); } items.sort((a,b)=>a.name? -1:1); return items; } catch(e){ console.warn('Overpass fail',e); return []; } }
+
+    // OpenAQ 簡單取得附近測站 PM2.5（示範，若無網路或 CORS 可能會被阻擋）
+    async function fetchNearbyAQI(lat,lon){ try{ const res = await fetch(`https://api.openaq.org/v2/latest?coordinates=${lat},${lon}&radius=5000&parameter=pm25&limit=1`); const data = await res.json(); if(data && data.results && data.results.length){ const val = data.results[0].measurements[0].value; return val.toFixed(1); } return null; } catch(e){ console.warn('AQ fetch fail',e); return null; } }
+
+    // 產生圓形迴圈路徑（若無路網資料）
+    function generateLoop(lat,lon,targetKm,points=12){ const radiusM = (targetKm*1000)/ (2*Math.PI); const pts=[]; for(let i=0;i<points;i++){ const ang = (i/points)*2*Math.PI; const dLat = (radiusM/6371000) * (180/Math.PI) * Math.sin(ang); const dLng = (radiusM/6371000) * (180/Math.PI) * Math.cos(ang) / Math.cos(lat*Math.PI/180); pts.push([lat + dLat, lon + dLng]); } pts.push(pts[0]); return pts; }
+
+    // ---------- Web Bluetooth: Heart Rate service (0x180D) ----------
+    async function connectWearable(){ if(!navigator.bluetooth) return alert('此瀏覽器不支援 Web Bluetooth'); try{ const device = await navigator.bluetooth.requestDevice({filters:[{services:['heart_rate']}]}); const server = await device.gatt.connect(); const service = await server.getPrimaryService('heart_rate'); const char = await service.getCharacteristic('heart_rate_measurement'); await char.startNotifications(); char.addEventListener('characteristicvaluechanged', e=>{ const val = parseHeartRate(e.target.value); document.getElementById('hr').innerText = val; provideHRFeedback(val); }); alert('已連線至 '+device.name); } catch(e){ console.warn(e); alert('連線失敗：'+e.message); } }
+    function parseHeartRate(dataView){ const flags = dataView.getUint8(0); const hrFormat = flags & 0x1; let rate = hrFormat ? dataView.getUint16(1,true) : dataView.getUint8(1); return rate; }
+
+    // ---------- 即時回饋（回饋 B：包含 MET 強度分類但無卡路里/體重） ----------
+    function updateFeedback(kmh, hr, durSec){ const feedback = document.getElementById('feedback'); let msgs = []; if(kmh && kmh>0){ const intensity = classifyIntensity(kmh); msgs.push(`步速：${intensity.label}（${kmh.toFixed(1)} km/h），${intensity.note}`); if(intensity.label.includes('快步')) msgs.push('建議：維持 15 分鐘以上以達到中等強度效果。'); } else { msgs.push('尚未移動或速度過低。'); } if(hr){ if(hr<60) msgs.push(`心率：${hr} bpm（偏低）`); else if(hr>160) msgs.push(`心率：${hr} bpm（偏高，請放慢或休息）`); else msgs.push(`心率：${hr} bpm（正常範圍）`); } msgs.push(`持續時間：${formatHMS(durSec)} 分鐘`); // show MET estimation (no calorie)
+      const met = kmhToMET(kmh); msgs.push(`強度估算：MET ≈ ${met}`); feedback.innerHTML = msgs.join('<br>'); }
+
+    function kmhToMET(kmh){ if(!kmh) return 2; if(kmh<3) return 2.5; if(kmh<4) return 3.5; if(kmh<5) return 4.5; if(kmh<6) return 7.0; return 9; }
+    function provideHRFeedback(hr){ if(!hr) return; const fb = document.getElementById('feedback'); if(hr>170) fb.innerHTML = '警示：心率過高，請立即減緩強度或停止。'; }
+
+    // ---------- 生命條更新（目標達成） ----------
+    function updateLifeBar(){ const goalSteps = parseInt(document.getElementById('goalSteps').value)||8000; const today = new Date().toISOString().slice(0,10); const arr = JSON.parse(localStorage.getItem('walk_records')||'[]'); const todaySteps=arr.filter(r=>r.dateOnly===today).reduce((s,r)=>s+(r.steps||0),0); const pct = Math.min(100, Math.round(todaySteps/goalSteps*100)); document.getElementById('lifeSteps').style.width = pct+'%'; document.getElementById('lifeStepsText').innerText = pct+'%'; document.getElementById('liveSteps').innerText = todaySteps.toLocaleString(); }
+
+    // ---------- 顯示所有紀錄功能（隨機顏色） ----------
+    function showAllRoutes(){ // clear previous
+      allRouteLayers.forEach(l=>map.removeLayer(l)); allRouteLayers=[];
+      const arr = JSON.parse(localStorage.getItem('walk_records')||'[]'); if(!arr.length) return alert('目前沒有紀錄'); const bounds = []; for(const rec of arr){ if(!rec.path||rec.path.length<2) continue; const coords = rec.path.map(p=>[p.lat,p.lng]); const color = randomColor(); const layer = L.polyline(coords, {color:color,weight:4,opacity:0.9}).addTo(map); allRouteLayers.push(layer); // start marker
+        const start = coords[0]; L.circleMarker(start,{radius:5,fillColor:color,color:'#fff',weight:1}).addTo(map).bindPopup(`${rec.dateOnly} ${new Date(rec.date).toLocaleTimeString()}`);
+        bounds.push(layer.getBounds()); }
+      if(bounds.length) { const combined = bounds.reduce((acc,b)=>acc.extend(b), bounds[0]); map.fitBounds(combined,{padding:[20,20]}); } }
+
+    function randomColor(){ const h = Math.floor(Math.random()*360); return `hsl(${h} 70% 45%)`; }
+
+    // ---------- 事件註冊 ----------
+    document.getElementById('recommendBtn').addEventListener('click', recommendRoute);
+    document.getElementById('connectWearBtn').addEventListener('click', connectWearable);
+    document.getElementById('startBtn').addEventListener('click', ()=>startWatch());
+    document.getElementById('stopBtn').addEventListener('click', ()=>stopWatch());
+    document.getElementById('saveBtn').addEventListener('click', ()=>saveSession());
+    document.getElementById('exportBtn').addEventListener('click', ()=>exportCSV());
+    document.getElementById('clearBtn').addEventListener('click', ()=>clearAll());
+    document.getElementById('showAllBtn').addEventListener('click', ()=>showAllRoutes());
+
+    // 目標鎖定/編輯邏輯（persist to localStorage）
+    const editBtn = document.getElementById('editGoalBtn');
+    editBtn.addEventListener('click', ()=>{
+      const gs = document.getElementById('goalSteps');
+      const gw = document.getElementById('goalWeeklyMin');
+      if(gs.disabled){ // enable for editing
+        gs.disabled=false; gw.disabled=false; gs.focus(); editBtn.innerText='儲存目標';
+      } else { // save and lock
+        gs.disabled=true; gw.disabled=true; editBtn.innerText='更改目標'; localStorage.setItem('goal_steps', gs.value); localStorage.setItem('goal_weekly_min', gw.value); updateLifeBar(); alert('已儲存目標'); }
+    });
+    // load saved goals on start
+    (function loadGoals(){ const gs = localStorage.getItem('goal_steps'); const gw = localStorage.getItem('goal_weekly_min'); if(gs) document.getElementById('goalSteps').value = gs; if(gw) document.getElementById('goalWeeklyMin').value = gw; })();
+
+    // load history on start
+    refreshHistory(); window.addEventListener('resize', ()=>map.invalidateSize());
+
+  </script>
+</body>
+</html>
