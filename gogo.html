@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>健走追蹤器（完整功能版）</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+body{margin:0;font-family:system-ui;background:#f5f7fb}
+header{background:#fff;padding:12px 16px;border-bottom:1px solid #eee}
+.container{max-width:1100px;margin:auto;padding:12px}
+.card{background:#fff;border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.06)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button{background:#1e88e5;color:#fff;border:none;padding:6px 10px;border-radius:8px;cursor:pointer}
+button.alt{background:#4caf50}
+button.danger{background:#ef4444}
+button.gray{background:#9e9e9e}
+.metric{flex:1;background:#f2f5f9;padding:8px;border-radius:8px}
+.metric b{font-size:18px}
+.small{font-size:13px;color:#666}
+#map{height:420px;border-radius:8px}
+.badge{padding:3px 6px;border-radius:6px;background:#e8f0ff;font-size:12px}
+.record{padding:6px;border-radius:6px;cursor:pointer}
+.record:hover{background:#f2f5f9}
+hr{border:none;border-top:1px solid #eee;margin:8px 0}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h2>🚶 健走追蹤器（完整功能版）</h2>
+</header>
+
+<div class="container">
+
+<!-- 地圖 -->
+<div class="card">
+  <div id="map"></div>
+</div>
+
+<!-- 控制 -->
+<div class="card row">
+  <button id="startBtn">開始</button>
+  <button id="stopBtn" class="alt" disabled>結束</button>
+  <button id="saveBtn" disabled>儲存</button>
+</div>
+
+<!-- 即時 -->
+<div class="card row">
+  <div class="metric">時間<br><b id="time">00:00:00</b></div>
+  <div class="metric">距離 km<br><b id="dist">0.00</b></div>
+</div>
+
+<!-- 篩選 -->
+<div class="card row">
+  <b>日期篩選</b>
+  <input type="date" id="dateFilter">
+  <button class="gray" onclick="clearFilter()">全部</button>
+</div>
+
+<!-- 紀錄 -->
+<div class="card">
+  <b>健走紀錄</b>
+  <div id="history" class="small"></div>
+</div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+let map=L.map('map').setView([25.03,121.56],15)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map)
+
+let watchId,startTime,currentSession=null
+let marker,line
+
+function load(){return JSON.parse(localStorage.getItem('walk_records')||'[]')}
+function save(a){localStorage.setItem('walk_records',JSON.stringify(a))}
+
+/* GPS */
+function onPos(p){
+  const {latitude,longitude}=p.coords
+  const pt={lat:latitude,lng:longitude}
+  if(!marker) marker=L.marker(pt).addTo(map)
+  else marker.setLatLng(pt)
+  if(!line) line=L.polyline([],{color:'#1e88e5'}).addTo(map)
+  line.addLatLng(pt)
+  currentSession.path.push(pt)
+}
+
+/* 開始 */
+startBtn.onclick=()=>{
+  currentSession={id:Date.now(),start:new Date().toISOString(),path:[]}
+  if(line){map.removeLayer(line);line=null}
+  startTime=Date.now()
+  watchId=navigator.geolocation.watchPosition(onPos)
+  startBtn.disabled=true
+  stopBtn.disabled=false
+}
+
+/* 結束 */
+stopBtn.onclick=()=>{
+  navigator.geolocation.clearWatch(watchId)
+  stopBtn.disabled=true
+  saveBtn.disabled=false
+}
+
+/* 儲存 */
+saveBtn.onclick=()=>{
+  const sec=Math.floor((Date.now()-startTime)/1000)
+  const rec={
+    id:currentSession.id,
+    dateOnly:currentSession.start.slice(0,10),
+    duration:sec,
+    path:currentSession.path,
+    source:'gps'
+  }
+  const a=load();a.push(rec);save(a)
+  currentSession=null
+  saveBtn.disabled=true
+  startBtn.disabled=false
+  render()
+}
+
+/* 渲染 */
+function render(){
+  const f=dateFilter.value
+  const a=load().filter(r=>!f||r.dateOnly===f)
+
+  history.innerHTML=a.map(r=>`
+    <div class="record">
+      📅 ${r.dateOnly}｜
+      ⏱ ${Math.round(r.duration/60)} 分｜
+      <span class="badge">${r.source}</span>
+      <button class="gray" onclick="play(${r.id})">回放</button>
+      <button class="danger" onclick="del(${r.id})">刪除</button>
+    </div>
+  `).join('')
+}
+
+/* 回放 */
+function play(id){
+  const r=load().find(x=>x.id===id)
+  if(!r||!r.path||!r.path.length) return alert('無路徑')
+  if(line) map.removeLayer(line)
+  line=L.polyline(r.path,{color:'red'}).addTo(map)
+  map.fitBounds(line.getBounds())
+}
+
+/* 刪除 */
+function del(id){
+  if(!confirm('刪除這筆紀錄？')) return
+  save(load().filter(r=>r.id!==id))
+  render()
+}
+
+function clearFilter(){
+  dateFilter.value=''
+  render()
+}
+
+dateFilter.onchange=render
+render()
+</script>
+
+</body>
+</html>
